@@ -17,29 +17,11 @@ main:
           - summary_table: "agg_taxi_summary_branched"
           - taxi_project: "bigquery-public-data"
           - taxi_dataset: "new_york_taxi"
-          - taxi_table: "tlc_green_trips_2019"
+          - taxi_table: "tlc_green_trips"
+          - filter_date: "2019-01-15"
           - execution_date: $${time.format(now(), "%Y-%m-%d")}
           - branch1_status: "PENDING"
           - branch2_status: "PENDING"
-    
-    - create_dataset:
-        try:
-          call: googleapis.bigquery.v2.datasets.insert
-          args:
-            projectId: ${project_id}
-            body:
-              datasetReference:
-                projectId: ${project_id}
-                datasetId: ${dataset_id}
-              location: ${dataset_location}
-          result: dataset_result
-        retry:
-          predicate: ${http.default_retry_predicate}
-          max_retries: 1
-          backoff:
-            initial_delay: 2
-            max_delay: 10
-            multiplier: 2
     
     - create_fact_table:
         try:
@@ -92,27 +74,29 @@ main:
                                   INSERT INTO `kodekloud-gcp-training.cloudworkflows_demo.fact_taxi_trips_branched`
                                   SELECT
                                     CONCAT(
-                                      CAST(EXTRACT(YEAR FROM pickup_datetime) AS STRING), '-',
-                                      CAST(EXTRACT(MONTH FROM pickup_datetime) AS STRING), '-',
+                                      CAST(EXTRACT(YEAR FROM t.lpep_pickup_datetime) AS STRING), '-',
+                                      CAST(EXTRACT(MONTH FROM t.lpep_pickup_datetime) AS STRING), '-',
                                       'LONG-',
-                                      ROW_NUMBER() OVER (PARTITION BY DATE(pickup_datetime) ORDER BY pickup_datetime)
+                                      CAST(ROW_NUMBER() OVER (PARTITION BY DATE(t.lpep_pickup_datetime) ORDER BY t.lpep_pickup_datetime) AS STRING)
                                     ) as trip_id,
-                                    pickup_datetime,
-                                    dropoff_datetime,
-                                    passenger_count,
-                                    trip_distance,
-                                    fare_amount,
-                                    total_amount,
-                                    pickup_borough,
-                                    dropoff_borough,
-                                    CAST(TIMESTAMP_DIFF(dropoff_datetime, pickup_datetime, MINUTE) AS INT64) as trip_duration_minutes,
+                                    t.lpep_pickup_datetime as pickup_datetime,
+                                    t.lpep_dropoff_datetime as dropoff_datetime,
+                                    t.passenger_count,
+                                    t.trip_distance,
+                                    t.fare_amount,
+                                    t.total_amount,
+                                    puz.Borough as pickup_borough,
+                                    doz.Borough as dropoff_borough,
+                                    CAST(TIMESTAMP_DIFF(t.lpep_dropoff_datetime, t.lpep_pickup_datetime, MINUTE) AS INT64) as trip_duration_minutes,
                                     'LONG' as distance_category,
                                     CURRENT_TIMESTAMP() as processing_timestamp
-                                  FROM `bigquery-public-data.new_york_taxi.tlc_green_trips_2019`
-                                  WHERE DATE(pickup_datetime) = CAST('2024-01-15' AS DATE)
-                                    AND trip_distance > 5
-                                    AND fare_amount > 0
-                                    AND passenger_count > 0
+                                  FROM `bigquery-public-data.new_york_taxi.tlc_green_trips` t
+                                  LEFT JOIN `bigquery-public-data.new_york_taxi.taxi_zone_lookup` puz ON t.PULocationID = puz.LocationID
+                                  LEFT JOIN `bigquery-public-data.new_york_taxi.taxi_zone_lookup` doz ON t.DOLocationID = doz.LocationID
+                                  WHERE DATE(t.lpep_pickup_datetime) = CAST('2019-01-15' AS DATE)
+                                    AND t.trip_distance > 5
+                                    AND t.fare_amount > 0
+                                    AND t.passenger_count > 0
                                   LIMIT 5000
                                 useLegacySql: false
                                 location: ${dataset_location}
@@ -137,27 +121,29 @@ main:
                                   INSERT INTO `kodekloud-gcp-training.cloudworkflows_demo.fact_taxi_trips_branched`
                                   SELECT
                                     CONCAT(
-                                      CAST(EXTRACT(YEAR FROM pickup_datetime) AS STRING), '-',
-                                      CAST(EXTRACT(MONTH FROM pickup_datetime) AS STRING), '-',
+                                      CAST(EXTRACT(YEAR FROM t.lpep_pickup_datetime) AS STRING), '-',
+                                      CAST(EXTRACT(MONTH FROM t.lpep_pickup_datetime) AS STRING), '-',
                                       'SHORT-',
-                                      ROW_NUMBER() OVER (PARTITION BY DATE(pickup_datetime) ORDER BY pickup_datetime)
+                                      CAST(ROW_NUMBER() OVER (PARTITION BY DATE(t.lpep_pickup_datetime) ORDER BY t.lpep_pickup_datetime) AS STRING)
                                     ) as trip_id,
-                                    pickup_datetime,
-                                    dropoff_datetime,
-                                    passenger_count,
-                                    trip_distance,
-                                    fare_amount,
-                                    total_amount,
-                                    pickup_borough,
-                                    dropoff_borough,
-                                    CAST(TIMESTAMP_DIFF(dropoff_datetime, pickup_datetime, MINUTE) AS INT64) as trip_duration_minutes,
+                                    t.lpep_pickup_datetime as pickup_datetime,
+                                    t.lpep_dropoff_datetime as dropoff_datetime,
+                                    t.passenger_count,
+                                    t.trip_distance,
+                                    t.fare_amount,
+                                    t.total_amount,
+                                    puz.Borough as pickup_borough,
+                                    doz.Borough as dropoff_borough,
+                                    CAST(TIMESTAMP_DIFF(t.lpep_dropoff_datetime, t.lpep_pickup_datetime, MINUTE) AS INT64) as trip_duration_minutes,
                                     'SHORT' as distance_category,
                                     CURRENT_TIMESTAMP() as processing_timestamp
-                                  FROM `bigquery-public-data.new_york_taxi.tlc_green_trips_2019`
-                                  WHERE DATE(pickup_datetime) = CAST('2024-01-15' AS DATE)
-                                    AND trip_distance <= 5
-                                    AND fare_amount > 0
-                                    AND passenger_count > 0
+                                  FROM `bigquery-public-data.new_york_taxi.tlc_green_trips` t
+                                  LEFT JOIN `bigquery-public-data.new_york_taxi.taxi_zone_lookup` puz ON t.PULocationID = puz.LocationID
+                                  LEFT JOIN `bigquery-public-data.new_york_taxi.taxi_zone_lookup` doz ON t.DOLocationID = doz.LocationID
+                                  WHERE DATE(t.lpep_pickup_datetime) = CAST('2019-01-15' AS DATE)
+                                    AND t.trip_distance <= 5
+                                    AND t.fare_amount > 0
+                                    AND t.passenger_count > 0
                                   LIMIT 5000
                                 useLegacySql: false
                                 location: ${dataset_location}
@@ -222,7 +208,7 @@ main:
                       ROUND(AVG(fare_amount), 2) as avg_fare_per_trip,
                       ROUND(AVG(trip_duration_minutes), 2) as avg_trip_duration_minutes
                     FROM `kodekloud-gcp-training.cloudworkflows_demo.fact_taxi_trips_branched`
-                    WHERE CAST(processing_timestamp AS DATE) = CAST('2024-01-15' AS DATE)
+                    WHERE CAST(processing_timestamp AS DATE) = CAST('2019-01-15' AS DATE)
                     GROUP BY processing_date, pickup_borough, distance_category
                     ORDER BY distance_category, total_trips DESC
                   useLegacySql: false

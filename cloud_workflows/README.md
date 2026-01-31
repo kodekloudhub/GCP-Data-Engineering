@@ -27,7 +27,18 @@ Initialize → Create Fact Table → (Branch 1: Long Trips in Parallel | Branch 
 ✅ **Basic Error Handling**: Try-catch blocks on BigQuery jobs with retry logic (2 retries, exponential backoff)
 ✅ **Comprehensive Logging**: INFO and ERROR level logs for monitoring
 ✅ **Hardcoded Project**: Uses `kodekloud-gcp-training` project
-✅ **Public Dataset**: Queries NYC taxi data from `bigquery-public-data.new_york_taxi.tlc_green_trips_2019`
+✅ **Public Dataset**: Queries NYC taxi data from `bigquery-public-data.new_york_taxi.tlc_green_trips` with borough lookup via `taxi_zone_lookup`
+
+## Public Dataset (BigQuery)
+
+The workflows use the **updated** NYC taxi public dataset:
+
+| Resource | Name | Description |
+|----------|------|-------------|
+| Trip data | `bigquery-public-data.new_york_taxi.tlc_green_trips` | Green taxi trips (partitioned by date; use `lpep_pickup_datetime`, `lpep_dropoff_datetime`, `PULocationID`, `DOLocationID`) |
+| Zone lookup | `bigquery-public-data.new_york_taxi.taxi_zone_lookup` | Maps `LocationID` to `Borough` and `Zone` for pickup/dropoff borough |
+
+The filter date is set to `2019-01-15` so the workflow returns data. You can change it to any date present in `tlc_green_trips`.
 
 ## Prerequisites
 
@@ -38,10 +49,11 @@ Initialize → Create Fact Table → (Branch 1: Long Trips in Parallel | Branch 
    - `roles/bigquery.dataEditor` (create/edit tables)
    - `roles/bigquery.jobUser` (submit BigQuery jobs)
    - `roles/workflows.invoker` (execute workflows)
-5. **BigQuery Dataset**: Create the `cloudworkflows_demo` dataset:
+5. **BigQuery Dataset — create first**: The workflows do **not** create the dataset. You must create the `cloudworkflows_demo` dataset **before** running either pipeline:
    ```bash
    bq mk --dataset --location=US kodekloud-gcp-training:cloudworkflows_demo
    ```
+   If the dataset already exists, this command is safe to run (it will report that the dataset exists). Run it once per project before the first workflow execution.
 
 ## Workflow Details
 
@@ -52,7 +64,8 @@ Initialize → Create Fact Table → (Branch 1: Long Trips in Parallel | Branch 
 3. **create_fact_table**: Create empty fact table with schema
    - Columns: trip_id, pickup_datetime, passenger_count, fare_amount, etc.
 4. **populate_fact_table**: Insert data from public dataset
-   - Filters: trip_distance > 0, fare_amount > 0, passenger_count > 0
+   - Source: `tlc_green_trips` joined with `taxi_zone_lookup` for pickup/dropoff borough
+   - Filters: trip_distance > 0, fare_amount > 0, passenger_count > 0, date = 2019-01-15
    - Limits: 10,000 records for demo
    - Calculates: trip_duration_minutes using TIMESTAMP_DIFF
 5. **create_summary_table**: Create aggregate table schema
@@ -157,9 +170,9 @@ bq rm -r -d kodekloud-gcp-training:cloudworkflows_demo
 ## Customization
 
 ### Change Date Filter
-Update the date in both workflows (currently `2024-01-15`):
+Update the date in both workflows (currently `2019-01-15`). Use a date that exists in the public dataset; `tlc_green_trips` is partitioned and contains historical data:
 ```yaml
-WHERE DATE(pickup_datetime) = CAST('2024-01-15' AS DATE)
+WHERE DATE(t.lpep_pickup_datetime) = CAST('2019-01-15' AS DATE)
 ```
 
 ### Adjust Record Limits
@@ -197,4 +210,4 @@ dataset_location: "EU"  # or another location
 - [Cloud Workflows Documentation](https://cloud.google.com/workflows/docs)
 - [Workflows YAML Syntax](https://cloud.google.com/workflows/docs/reference/syntax)
 - [BigQuery REST API](https://cloud.google.com/bigquery/docs/reference/rest/v2)
-- [NYC Taxi Public Dataset](https://console.cloud.google.com/bigquery?p=bigquery-public-data&d=new_york_taxi)
+- [NYC Taxi Public Dataset](https://console.cloud.google.com/bigquery?p=bigquery-public-data&d=new_york_taxi) — uses `tlc_green_trips` (partitioned) and `taxi_zone_lookup` for borough names
