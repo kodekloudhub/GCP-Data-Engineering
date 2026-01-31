@@ -1,0 +1,186 @@
+# Cloud Workflows - Linear NYC Taxi Data Transformation Pipeline
+# This workflow sequentially processes NYC taxi public data and creates fact/aggregate tables
+# No table deletion - tables are persisted after execution
+# Manual trigger only - no schedule
+
+main:
+  steps:
+    - init_variables:
+        assign:
+          - project_id: "kodekloud-gcp-training"
+          - dataset_id: "cloudworkflows_demo"
+          - dataset_location: "US"
+          - fact_table: "fact_taxi_trips_linear"
+          - summary_table: "agg_taxi_summary_linear"
+          - taxi_project: "bigquery-public-data"
+          - taxi_dataset: "new_york_taxi"
+          - taxi_table: "tlc_green_trips_2019"
+          - execution_date: $${time.format(now(), "%Y-%m-%d")}
+          - workflow_status: "STARTED"
+    
+    - create_dataset:
+        try:
+          call: googleapis.bigquery.v2.datasets.insert
+          args:
+            projectId: ${project_id}
+            body:
+              datasetReference:
+                projectId: ${project_id}
+                datasetId: ${dataset_id}
+              location: ${dataset_location}
+          result: dataset_result
+        retry:
+          predicate: ${http.default_retry_predicate}
+          max_retries: 1
+          backoff:
+            initial_delay: 2
+            max_delay: 10
+            multiplier: 2
+    
+    - create_fact_table:
+        try:
+          call: googleapis.bigquery.v2.jobs.insert
+          args:
+            projectId: ${project_id}
+            body:
+              configuration:
+                query:
+                  query: |
+                    CREATE TABLE IF NOT EXISTS `kodekloud-gcp-training.cloudworkflows_demo.fact_taxi_trips_linear` (
+                      trip_id STRING NOT NULL,
+                      pickup_datetime TIMESTAMP NOT NULL,
+                      dropoff_datetime TIMESTAMP,
+                      passenger_count INT64,
+                      trip_distance FLOAT64,
+                      fare_amount FLOAT64,
+                      total_amount FLOAT64,
+                      pickup_borough STRING,
+                      dropoff_borough STRING,
+                      trip_duration_minutes INT64,
+                      processing_timestamp TIMESTAMP NOT NULL
+                    )
+                  useLegacySql: false
+                  location: ${dataset_location}
+          result: create_fact_result
+        retry:
+          predicate: ${http.default_retry_predicate}
+          max_retries: 2
+          backoff:
+            initial_delay: 5
+            max_delay: 30
+            multiplier: 2
+    
+    - populate_fact_table:
+        try:
+          call: googleapis.bigquery.v2.jobs.insert
+          args:
+            projectId: ${project_id}
+            body:
+              configuration:
+                query:
+                  query: |
+                    INSERT INTO `kodekloud-gcp-training.cloudworkflows_demo.fact_taxi_trips_linear`
+                    SELECT
+                      CONCAT(
+                        CAST(EXTRACT(YEAR FROM pickup_datetime) AS STRING), '-',
+                        CAST(EXTRACT(MONTH FROM pickup_datetime) AS STRING), '-',
+                        ROW_NUMBER() OVER (PARTITION BY DATE(pickup_datetime) ORDER BY pickup_datetime)
+                      ) as trip_id,
+                      pickup_datetime,
+                      dropoff_datetime,
+                      passenger_count,
+                      trip_distance,
+                      fare_amount,
+                      total_amount,
+                      pickup_borough,
+                      dropoff_borough,
+                      CAST(TIMESTAMP_DIFF(dropoff_datetime, pickup_datetime, MINUTE) AS INT64) as trip_duration_minutes,
+                      CURRENT_TIMESTAMP() as processing_timestamp
+                    FROM `bigquery-public-data.new_york_taxi.tlc_green_trips_2019`
+                    WHERE DATE(pickup_datetime) = CAST('2024-01-15' AS DATE)
+                      AND trip_distance > 0
+                      AND fare_amount > 0
+                      AND passenger_count > 0
+                    LIMIT 10000
+                  useLegacySql: false
+                  location: ${dataset_location}
+          result: populate_fact_result
+        retry:
+          predicate: ${http.default_retry_predicate}
+          max_retries: 2
+          backoff:
+            initial_delay: 5
+            max_delay: 30
+            multiplier: 2
+    
+    - create_summary_table:
+        try:
+          call: googleapis.bigquery.v2.jobs.insert
+          args:
+            projectId: ${project_id}
+            body:
+              configuration:
+                query:
+                  query: |
+                    CREATE TABLE IF NOT EXISTS `kodekloud-gcp-training.cloudworkflows_demo.agg_taxi_summary_linear` (
+                      processing_date DATE NOT NULL,
+                      pickup_borough STRING NOT NULL,
+                      total_trips INT64 NOT NULL,
+                      total_passengers INT64 NOT NULL,
+                      total_distance FLOAT64 NOT NULL,
+                      total_fare FLOAT64 NOT NULL,
+                      avg_fare_per_trip FLOAT64 NOT NULL,
+                      avg_trip_duration_minutes FLOAT64 NOT NULL
+                    )
+                  useLegacySql: false
+                  location: ${dataset_location}
+          result: create_summary_result
+        retry:
+          predicate: ${http.default_retry_predicate}
+          max_retries: 2
+          backoff:
+            initial_delay: 5
+            max_delay: 30
+            multiplier: 2
+    
+    - populate_summary_table:
+        try:
+          call: googleapis.bigquery.v2.jobs.insert
+          args:
+            projectId: ${project_id}
+            body:
+              configuration:
+                query:
+                  query: |
+                    INSERT INTO `kodekloud-gcp-training.cloudworkflows_demo.agg_taxi_summary_linear`
+                    SELECT
+                      CAST(processing_timestamp AS DATE) as processing_date,
+                      pickup_borough,
+                      COUNT(*) as total_trips,
+                      SUM(passenger_count) as total_passengers,
+                      SUM(trip_distance) as total_distance,
+                      SUM(fare_amount) as total_fare,
+                      ROUND(AVG(fare_amount), 2) as avg_fare_per_trip,
+                      ROUND(AVG(trip_duration_minutes), 2) as avg_trip_duration_minutes
+                    FROM `kodekloud-gcp-training.cloudworkflows_demo.fact_taxi_trips_linear`
+                    WHERE CAST(processing_timestamp AS DATE) = CAST('2024-01-15' AS DATE)
+                    GROUP BY processing_date, pickup_borough
+                    ORDER BY total_trips DESC
+                  useLegacySql: false
+                  location: ${dataset_location}
+          result: populate_summary_result
+        retry:
+          predicate: ${http.default_retry_predicate}
+          max_retries: 2
+          backoff:
+            initial_delay: 5
+            max_delay: 30
+            multiplier: 2
+    
+    - return_result:
+        return:
+          workflow: "linear_taxi_transformation"
+          status: "COMPLETED"
+          fact_table: ${fact_table}
+          summary_table: ${summary_table}
+          timestamp: ${execution_date}
